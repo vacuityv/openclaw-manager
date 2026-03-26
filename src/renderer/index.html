@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com; font-src 'self' https://unpkg.com data:;">
+  <title>OpenClaw 管理器</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div id="app">
+    <div class="app-layout">
+      <!-- 侧边栏 -->
+      <div class="sidebar">
+        <div class="sidebar-logo">
+          <div class="logo-icon">EC</div>
+          <span class="logo-text">Easy Claw</span>
+        </div>
+        <div class="sidebar-menu">
+          <div class="menu-item" :class="{ active: currentTab === 'dashboard' }" @click="currentTab = 'dashboard'">
+            <span class="menu-icon">&#9673;</span>
+            <span>仪表盘</span>
+          </div>
+          <div class="menu-item" :class="{ active: currentTab === 'service' }" @click="currentTab = 'service'">
+            <span class="menu-icon">&#9881;</span>
+            <span>服务管理</span>
+          </div>
+          <div class="menu-item" :class="{ active: currentTab === 'logs' }" @click="currentTab = 'logs'">
+            <span class="menu-icon">&#9776;</span>
+            <span>日志</span>
+          </div>
+          <div class="menu-item" :class="{ active: currentTab === 'settings' }" @click="currentTab = 'settings'">
+            <span class="menu-icon">&#9881;</span>
+            <span>设置</span>
+          </div>
+        </div>
+
+        <!-- Easy Claw 推广横幅 -->
+        <div class="sidebar-promo" @click="openPromoLink">
+          <div class="promo-badge">EC</div>
+          <div class="promo-info">
+            <div class="promo-title">Easy Claw</div>
+            <div class="promo-desc">AI API 令牌</div>
+          </div>
+          <div class="promo-arrow">&#8599;</div>
+        </div>
+      </div>
+
+      <!-- 主内容区 -->
+      <div class="main-content">
+        <!-- 仪表盘 -->
+        <div v-show="currentTab === 'dashboard'" class="page">
+          <h2>网关状态</h2>
+
+          <!-- 状态卡片 -->
+          <div class="status-cards">
+            <div class="status-card" :class="gatewayStatusClass">
+              <div class="card-icon">
+                <div class="status-dot" :class="gatewayStatusClass"></div>
+              </div>
+              <div class="card-info">
+                <div class="card-label">网关</div>
+                <div class="card-value">{{ gatewayStatusText }}</div>
+              </div>
+            </div>
+
+            <div class="status-card" :class="portStatusClass">
+              <div class="card-icon">
+                <div class="status-dot" :class="portStatusClass"></div>
+              </div>
+              <div class="card-info">
+                <div class="card-label">端口 {{ port }}</div>
+                <div class="card-value">{{ portReachable ? '可达' : '不可达' }}</div>
+              </div>
+            </div>
+
+            <div class="status-card" :class="cliStatusClass">
+              <div class="card-icon">
+                <div class="status-dot" :class="cliStatusClass"></div>
+              </div>
+              <div class="card-info">
+                <div class="card-label">命令行工具</div>
+                <div class="card-value">{{ cliVersion || '未找到' }}</div>
+              </div>
+            </div>
+
+            <div class="status-card" :class="nodeStatusClass">
+              <div class="card-icon">
+                <div class="status-dot" :class="nodeStatusClass"></div>
+              </div>
+              <div class="card-info">
+                <div class="card-label">Node.js</div>
+                <div class="card-value">{{ nodeVersion || '未找到' }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Easy Claw 推广卡片 -->
+          <div class="promo-card" @click="openPromoLink">
+            <div class="promo-card-left">
+              <div class="promo-card-badge">Easy Claw</div>
+              <div class="promo-card-title">GPT API 令牌服务</div>
+              <div class="promo-card-features">
+                <span class="promo-tag">兼容 OpenAI</span>
+                <span class="promo-tag">GPT-5 全系列</span>
+                <span class="promo-tag">按量计费</span>
+              </div>
+              <div class="promo-card-desc">一个 API Key 即可调用 GPT-5 / GPT-5.2 / GPT-5.4 等全系列模型，输入低至 ¥0.2/M，OpenAI 兼容格式，即插即用，无缝对接 OpenClaw。</div>
+            </div>
+            <div class="promo-card-right">
+              <div class="promo-card-url">vacaifreeapi.cc</div>
+              <button class="btn btn-accent btn-sm" @click.stop="openPromoLink">获取令牌</button>
+            </div>
+          </div>
+
+          <!-- 健康详情 -->
+          <div class="section" v-if="healthData">
+            <h3>健康详情</h3>
+            <pre class="health-json">{{ formatJson(healthData) }}</pre>
+          </div>
+
+          <div class="actions-bar">
+            <button class="btn btn-primary" @click="refreshStatus" :disabled="loading">
+              {{ loading ? '检查中...' : '刷新状态' }}
+            </button>
+            <button class="btn btn-secondary" @click="openDashboard">
+              打开 Web 控制台
+            </button>
+          </div>
+        </div>
+
+        <!-- 服务管理 -->
+        <div v-show="currentTab === 'service'" class="page">
+          <h2>服务管理</h2>
+
+          <div class="service-status">
+            <div class="big-status" :class="gatewayStatusClass">
+              <div class="big-dot" :class="gatewayStatusClass"></div>
+              <span>{{ gatewayStatusText }}</span>
+            </div>
+          </div>
+
+          <div class="service-actions">
+            <button class="btn btn-success btn-lg" @click="confirmAction('start')" :disabled="actionLoading">
+              <span class="btn-icon">&#9654;</span> 启动
+            </button>
+            <button class="btn btn-danger btn-lg" @click="confirmAction('stop')" :disabled="actionLoading">
+              <span class="btn-icon">&#9632;</span> 停止
+            </button>
+            <button class="btn btn-warning btn-lg" @click="confirmAction('restart')" :disabled="actionLoading">
+              <span class="btn-icon">&#8635;</span> 重启
+            </button>
+          </div>
+
+          <div class="action-output" v-if="actionResult">
+            <h3>执行结果</h3>
+            <pre>{{ formatJson(actionResult) }}</pre>
+          </div>
+        </div>
+
+        <!-- 日志 -->
+        <div v-show="currentTab === 'logs'" class="page page-logs">
+          <div class="logs-header">
+            <h2>日志</h2>
+            <div class="logs-actions">
+              <input class="filter-input" v-model="logFilter" placeholder="筛选日志..." />
+              <button class="btn btn-sm" :class="streaming ? 'btn-danger' : 'btn-primary'" @click="toggleStream">
+                {{ streaming ? '停止推送' : '实时推送' }}
+              </button>
+              <button class="btn btn-sm btn-secondary" @click="loadLogs" :disabled="logsLoading">
+                重新加载
+              </button>
+              <button class="btn btn-sm btn-secondary" @click="openLogFolder">
+                打开目录
+              </button>
+            </div>
+          </div>
+          <div class="log-container" ref="logContainer">
+            <div v-for="(line, i) in filteredLogs" :key="i" class="log-line" :class="logLineClass(line)">{{ line }}</div>
+            <div v-if="filteredLogs.length === 0" class="log-empty">暂无日志</div>
+          </div>
+        </div>
+
+        <!-- 设置 -->
+        <div v-show="currentTab === 'settings'" class="page">
+          <h2>设置</h2>
+
+          <div class="settings-section">
+            <h3>运行环境</h3>
+            <div class="setting-row">
+              <label>OpenClaw 命令行</label>
+              <span :class="cliAvailable ? 'text-success' : 'text-danger'">
+                {{ cliAvailable ? ('已安装 - ' + cliVersion) : '未找到（不在 PATH 中）' }}
+              </span>
+            </div>
+            <div class="setting-row">
+              <label>Node.js</label>
+              <span :class="nodeCompatible ? 'text-success' : 'text-warning'">
+                {{ nodeVersion ? ('v' + nodeVersion + (nodeCompatible ? ' (满足要求)' : ' (需要 >= 22.14)')) : '未找到' }}
+              </span>
+            </div>
+            <div class="setting-row">
+              <label>Docker</label>
+              <span :class="dockerAvailable ? 'text-success' : 'text-muted'">
+                {{ dockerAvailable ? '运行中（已检测到 OpenClaw 容器）' : '未检测到' }}
+              </span>
+            </div>
+            <div class="setting-row">
+              <label>网关端口</label>
+              <span>{{ port }}</span>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>关于</h3>
+            <div class="setting-row">
+              <label>OpenClaw 管理器</label>
+              <span>v1.0.0</span>
+            </div>
+            <div class="setting-row">
+              <label>官方文档</label>
+              <a href="#" @click.prevent="openPromoExternal('https://docs.openclaw.ai')">docs.openclaw.ai</a>
+            </div>
+            <div class="setting-row">
+              <label>API 令牌服务</label>
+              <a href="#" @click.prevent="openPromoLink">vacaifreeapi.cc - Easy Claw</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div class="modal-overlay" v-if="showConfirm" @click="showConfirm = false">
+      <div class="modal" @click.stop>
+        <h3>确认操作</h3>
+        <p>确定要 <strong>{{ confirmActionLabel }}</strong> 网关吗？</p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showConfirm = false">取消</button>
+          <button class="btn btn-primary" @click="executeAction">确认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    const { createApp } = Vue;
+
+    const ACTION_LABELS = {
+      start: '启动',
+      stop: '停止',
+      restart: '重启'
+    };
+
+    createApp({
+      data() {
+        return {
+          currentTab: 'dashboard',
+          loading: false,
+          actionLoading: false,
+          logsLoading: false,
+
+          // 状态
+          gatewayRunning: false,
+          portReachable: false,
+          port: 18789,
+          healthData: null,
+
+          // 环境
+          cliAvailable: false,
+          cliVersion: '',
+          nodeVersion: '',
+          nodeCompatible: false,
+          dockerAvailable: false,
+
+          // 服务管理
+          showConfirm: false,
+          confirmActionName: '',
+          actionResult: null,
+
+          // 日志
+          logLines: [],
+          logFilter: '',
+          streaming: false
+        };
+      },
+
+      computed: {
+        gatewayStatusText() {
+          if (this.loading) return '检查中...';
+          return this.gatewayRunning ? '运行中' : '已停止';
+        },
+        confirmActionLabel() {
+          return ACTION_LABELS[this.confirmActionName] || this.confirmActionName;
+        },
+        gatewayStatusClass() {
+          return this.gatewayRunning ? 'status-ok' : 'status-error';
+        },
+        portStatusClass() {
+          return this.portReachable ? 'status-ok' : 'status-error';
+        },
+        cliStatusClass() {
+          return this.cliAvailable ? 'status-ok' : 'status-error';
+        },
+        nodeStatusClass() {
+          if (!this.nodeVersion) return 'status-error';
+          return this.nodeCompatible ? 'status-ok' : 'status-warning';
+        },
+        filteredLogs() {
+          if (!this.logFilter) return this.logLines;
+          const f = this.logFilter.toLowerCase();
+          return this.logLines.filter(l => l.toLowerCase().includes(f));
+        }
+      },
+
+      methods: {
+        async refreshStatus() {
+          this.loading = true;
+          try {
+            const [env, health] = await Promise.all([
+              window.openclaw.detectEnvironment(),
+              window.openclaw.healthCheck()
+            ]);
+
+            this.cliAvailable = env.cli.available;
+            this.cliVersion = env.cli.version || '';
+            this.nodeVersion = env.node.version || '';
+            this.nodeCompatible = env.node.compatible || false;
+            this.dockerAvailable = env.docker.available || false;
+
+            this.portReachable = health.probe?.reachable || false;
+            this.gatewayRunning = this.portReachable;
+            this.healthData = health.health?.error ? null : health.health;
+          } catch (e) {
+            console.error('状态检查失败:', e);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        confirmAction(action) {
+          this.confirmActionName = action;
+          this.showConfirm = true;
+        },
+
+        async executeAction() {
+          this.showConfirm = false;
+          this.actionLoading = true;
+          this.actionResult = null;
+          try {
+            const action = this.confirmActionName;
+            let result;
+            if (action === 'start') result = await window.openclaw.start();
+            else if (action === 'stop') result = await window.openclaw.stop();
+            else if (action === 'restart') result = await window.openclaw.restart();
+            this.actionResult = result;
+            setTimeout(() => this.refreshStatus(), 2000);
+          } catch (e) {
+            this.actionResult = { error: e.message || '操作失败' };
+          } finally {
+            this.actionLoading = false;
+          }
+        },
+
+        async loadLogs() {
+          this.logsLoading = true;
+          try {
+            const result = await window.openclaw.getLogs(500);
+            if (result.logs) {
+              this.logLines = result.logs.split('\n');
+              this.$nextTick(() => this.scrollLogsToBottom());
+            } else if (result.error) {
+              this.logLines = [`错误: ${result.message}`];
+            }
+          } catch (e) {
+            this.logLines = [`错误: ${e.message}`];
+          } finally {
+            this.logsLoading = false;
+          }
+        },
+
+        async toggleStream() {
+          if (this.streaming) {
+            await window.openclaw.stopLogStream();
+            this.streaming = false;
+          } else {
+            this.logLines = [];
+            await window.openclaw.startLogStream();
+            this.streaming = true;
+          }
+        },
+
+        scrollLogsToBottom() {
+          const container = this.$refs.logContainer;
+          if (container) container.scrollTop = container.scrollHeight;
+        },
+
+        openLogFolder() {
+          window.openclaw.openLogFolder();
+        },
+
+        openDashboard() {
+          window.openclaw.openDashboard();
+        },
+
+        openPromoLink() {
+          window.openclaw.openExternal('https://vacaifreeapi.cc');
+        },
+
+        openPromoExternal(url) {
+          window.openclaw.openExternal(url);
+        },
+
+        formatJson(obj) {
+          try {
+            return JSON.stringify(obj, null, 2);
+          } catch {
+            return String(obj);
+          }
+        },
+
+        logLineClass(line) {
+          const l = line.toLowerCase();
+          if (l.includes('error') || l.includes('fatal')) return 'log-error';
+          if (l.includes('warn')) return 'log-warn';
+          if (l.includes('info')) return 'log-info';
+          return '';
+        }
+      },
+
+      mounted() {
+        this.refreshStatus();
+
+        window.openclaw.onLogData((data) => {
+          const lines = data.split('\n').filter(l => l.trim());
+          this.logLines.push(...lines);
+          if (this.logLines.length > 2000) {
+            this.logLines = this.logLines.slice(-2000);
+          }
+          this.$nextTick(() => this.scrollLogsToBottom());
+        });
+
+        window.openclaw.onLogError((data) => {
+          this.logLines.push(`[错误] ${data}`);
+        });
+
+        window.openclaw.onStatusUpdate((data) => {
+          this.portReachable = data.probe?.reachable || false;
+          this.gatewayRunning = this.portReachable || data.status === 'running';
+        });
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

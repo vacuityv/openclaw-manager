@@ -1,0 +1,36 @@
+{
+  "name": "openclaw-manager",
+  "version": "1.0.0",
+  "description": "OpenClaw Gateway Manager for Windows",
+  "main": "src/main/index.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.openclaw.manager",
+    "productName": "OpenClaw Manager",
+    "win": {
+      "target": ["nsis"],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "OpenClaw Manager"
+    },
+    "files": [
+      "src/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "author": "OpenClaw",
+  "license": "MIT"
+}
