@@ -30,7 +30,7 @@ class OpenClawManager {
         const out = decodeBuffer(stdout).trim();
         const err = decodeBuffer(stderr).trim();
         if (error) {
-          reject({ error: decodeBuffer(Buffer.from(error.message || '')), stderr: err, code: error.code });
+          reject({ error: err || out || 'Command failed', stderr: err, code: error.code });
           return;
         }
         resolve({ stdout: out, stderr: err });
