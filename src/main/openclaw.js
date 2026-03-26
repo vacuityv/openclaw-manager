@@ -11,8 +11,11 @@ class OpenClawManager {
 
   // Execute a CLI command and return parsed result
   execCommand(command, timeout = 15000) {
+    const cmd = process.platform === 'win32'
+      ? `chcp 65001 >nul && ${this.cliBin} ${command}`
+      : `${this.cliBin} ${command}`;
     return new Promise((resolve, reject) => {
-      exec(`${this.cliBin} ${command}`, { timeout }, (error, stdout, stderr) => {
+      exec(cmd, { timeout, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) {
           reject({ error: error.message, stderr, code: error.code });
           return;
@@ -45,7 +48,7 @@ class OpenClawManager {
   // Check Node.js version
   async detectNode() {
     return new Promise((resolve) => {
-      exec('node --version', { timeout: 5000 }, (error, stdout) => {
+      exec('node --version', { timeout: 5000, encoding: 'utf8' }, (error, stdout) => {
         if (error) {
           resolve({ available: false, version: null });
           return;
@@ -61,7 +64,7 @@ class OpenClawManager {
   // Check if Docker is running with openclaw container
   async detectDocker() {
     return new Promise((resolve) => {
-      exec('docker ps --format "{{.Names}} {{.Image}}" 2>&1', { timeout: 5000 }, (error, stdout) => {
+      exec('docker ps --format "{{.Names}} {{.Image}}" 2>&1', { timeout: 5000, encoding: 'utf8' }, (error, stdout) => {
         if (error) {
           resolve({ available: false, containers: [] });
           return;
@@ -166,9 +169,11 @@ class OpenClawManager {
     if (this.logProcess) {
       this.logProcess.kill();
     }
-    this.logProcess = spawn(this.cliBin, ['logs', '--follow', '--local-time'], {
-      shell: true
-    });
+    const args = process.platform === 'win32'
+      ? ['/c', 'chcp', '65001', '>nul', '&&', this.cliBin, 'logs', '--follow', '--local-time']
+      : ['logs', '--follow', '--local-time'];
+    const bin = process.platform === 'win32' ? 'cmd' : this.cliBin;
+    this.logProcess = spawn(bin, args, { shell: false });
     this.logProcess.stdout.on('data', (data) => onData(data.toString()));
     this.logProcess.stderr.on('data', (data) => onError(data.toString()));
     this.logProcess.on('close', () => { this.logProcess = null; });
