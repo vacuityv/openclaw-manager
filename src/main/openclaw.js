@@ -2,27 +2,38 @@ const { exec, spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 
+const isWin = process.platform === 'win32';
+const gbkDecoder = isWin ? new TextDecoder('gbk') : null;
+
+function decodeBuffer(buf) {
+  if (!isWin) return buf.toString('utf8');
+  // 先尝试 UTF-8，如果包含乱码则用 GBK 解码
+  const utf8 = buf.toString('utf8');
+  if (!utf8.includes('\ufffd')) return utf8;
+  return gbkDecoder.decode(buf);
+}
+
 class OpenClawManager {
   constructor() {
     this.cliBin = 'openclaw';
     this.gatewayPort = 18789;
-    this.gatewayProcess = null;  // 仅前台模式使用
+    this.gatewayProcess = null;
     this.gatewayLogs = [];
     this.maxLogLines = 5000;
   }
 
   // Execute a CLI command and return parsed result
   execCommand(command, timeout = 15000) {
-    const cmd = process.platform === 'win32'
-      ? `chcp 65001 >nul && ${this.cliBin} ${command}`
-      : `${this.cliBin} ${command}`;
+    const cmd = `${this.cliBin} ${command}`;
     return new Promise((resolve, reject) => {
-      exec(cmd, { timeout, encoding: 'utf8' }, (error, stdout, stderr) => {
+      exec(cmd, { timeout, encoding: 'buffer' }, (error, stdout, stderr) => {
+        const out = decodeBuffer(stdout).trim();
+        const err = decodeBuffer(stderr).trim();
         if (error) {
-          reject({ error: error.message, stderr, code: error.code });
+          reject({ error: decodeBuffer(Buffer.from(error.message || '')), stderr: err, code: error.code });
           return;
         }
-        resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
+        resolve({ stdout: out, stderr: err });
       });
     });
   }
@@ -40,12 +51,12 @@ class OpenClawManager {
   // Check Node.js version
   async detectNode() {
     return new Promise((resolve) => {
-      exec('node --version', { timeout: 5000, encoding: 'utf8' }, (error, stdout) => {
+      exec('node --version', { timeout: 5000, encoding: 'buffer' }, (error, stdout) => {
         if (error) {
           resolve({ available: false, version: null });
           return;
         }
-        const version = stdout.trim().replace('v', '');
+        const version = decodeBuffer(stdout).trim().replace('v', '');
         const [major, minor] = version.split('.').map(Number);
         const compatible = major > 22 || (major === 22 && minor >= 14);
         resolve({ available: true, version, compatible });
@@ -56,12 +67,12 @@ class OpenClawManager {
   // Check if Docker is running with openclaw container
   async detectDocker() {
     return new Promise((resolve) => {
-      exec('docker ps --format "{{.Names}} {{.Image}}" 2>&1', { timeout: 5000, encoding: 'utf8' }, (error, stdout) => {
+      exec('docker ps --format "{{.Names}} {{.Image}}" 2>&1', { timeout: 5000, encoding: 'buffer' }, (error, stdout) => {
         if (error) {
           resolve({ available: false, containers: [] });
           return;
         }
-        const lines = stdout.trim().split('\n').filter(l => l.toLowerCase().includes('openclaw'));
+        const lines = decodeBuffer(stdout).trim().split('\n').filter(l => l.toLowerCase().includes('openclaw'));
         resolve({ available: lines.length > 0, containers: lines });
       });
     });
@@ -140,16 +151,14 @@ class OpenClawManager {
       return { error: false, message: '网关已在运行中' };
     }
 
-    const args = process.platform === 'win32'
-      ? ['/c', 'chcp', '65001', '>nul', '&&', this.cliBin, 'gateway', 'run', '--port', String(this.gatewayPort)]
-      : ['gateway', 'run', '--port', String(this.gatewayPort)];
-    const bin = process.platform === 'win32' ? 'cmd' : this.cliBin;
+    const args = ['gateway', 'run', '--port', String(this.gatewayPort)];
+    const bin = this.cliBin;
 
-    this.gatewayProcess = spawn(bin, args, { shell: false });
+    this.gatewayProcess = spawn(bin, args, { shell: true });
     this.gatewayLogs = [];
 
     const handleOutput = (data) => {
-      const text = data.toString();
+      const text = decodeBuffer(data);
       const lines = text.split('\n').filter(l => l.trim());
       this.gatewayLogs.push(...lines);
       if (this.gatewayLogs.length > this.maxLogLines) {
@@ -181,7 +190,7 @@ class OpenClawManager {
       // fallback: kill foreground process
       if (this.gatewayProcess && this.gatewayProcess.exitCode === null) {
         if (process.platform === 'win32') {
-          exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'utf8' });
+          exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'buffer' });
         } else {
           this.gatewayProcess.kill('SIGTERM');
         }
@@ -235,14 +244,9 @@ class OpenClawManager {
     // 如果有前台进程，日志已经自动推送，无需额外 stream
     if (this.gatewayProcess) return null;
 
-    const args = process.platform === 'win32'
-      ? ['/c', 'chcp', '65001', '>nul', '&&', this.cliBin, 'logs', '--follow', '--local-time']
-      : ['logs', '--follow', '--local-time'];
-    const bin = process.platform === 'win32' ? 'cmd' : this.cliBin;
-
-    const logProc = spawn(bin, args, { shell: false });
-    logProc.stdout.on('data', (data) => onData(data.toString()));
-    logProc.stderr.on('data', (data) => onError(data.toString()));
+    const logProc = spawn(this.cliBin, ['logs', '--follow', '--local-time'], { shell: true });
+    logProc.stdout.on('data', (data) => onData(decodeBuffer(data)));
+    logProc.stderr.on('data', (data) => onError(decodeBuffer(data)));
     return logProc;
   }
 
@@ -255,7 +259,7 @@ class OpenClawManager {
   cleanup() {
     if (this.gatewayProcess && this.gatewayProcess.exitCode === null) {
       if (process.platform === 'win32') {
-        exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'utf8' });
+        exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'buffer' });
       } else {
         this.gatewayProcess.kill('SIGTERM');
       }
