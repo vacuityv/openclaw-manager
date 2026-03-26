@@ -30,9 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openclaw-manager-windows
-          path: |
-            dist/*.exe
-            dist/*.yml
+          path: dist/*.exe
           retention-days: 30
 
       - name: Release

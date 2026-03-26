@@ -15,14 +15,11 @@
     "appId": "ai.openclaw.manager",
     "productName": "OpenClaw Manager",
     "win": {
-      "target": ["nsis"],
+      "target": ["portable"],
       "icon": "resources/icon.ico"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "OpenClaw Manager"
+    "portable": {
+      "artifactName": "OpenClaw-Manager-${version}.exe"
     },
     "files": [
       "src/**/*"
