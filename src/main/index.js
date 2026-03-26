@@ -29,7 +29,6 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Minimize to tray instead of closing
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
@@ -38,77 +37,69 @@ function createWindow() {
   });
 }
 
+function onGatewayLog(data) {
+  mainWindow?.webContents?.send('log-data', data);
+}
+
 function setupIPC() {
-  // Environment detection
   ipcMain.handle('detect-environment', async () => {
     return await manager.detectEnvironment();
   });
 
-  // Health check
   ipcMain.handle('health-check', async () => {
     return await manager.healthCheck();
   });
 
   ipcMain.handle('get-status', async () => {
-    return await manager.getStatus();
+    const probe = await manager.probePort();
+    return { running: manager.isRunning() || probe.reachable };
   });
 
-  // Service management
   ipcMain.handle('gateway-start', async () => {
-    const result = await manager.start();
-    setTimeout(() => pollHealth(), 2000);
+    const result = await manager.start(onGatewayLog);
+    setTimeout(() => pollHealth(), 3000);
     return result;
   });
 
   ipcMain.handle('gateway-stop', async () => {
     const result = await manager.stop();
-    setTimeout(() => pollHealth(), 1000);
+    setTimeout(() => pollHealth(), 1500);
     return result;
   });
 
   ipcMain.handle('gateway-restart', async () => {
-    const result = await manager.restart();
+    const result = await manager.restart(onGatewayLog);
     setTimeout(() => pollHealth(), 3000);
     return result;
   });
 
-  // Logs
   ipcMain.handle('get-logs', async (_, limit) => {
     return await manager.getLogs(limit || 200);
   });
 
-  ipcMain.handle('start-log-stream', async () => {
-    manager.streamLogs(
+  ipcMain.handle('start-log-stream', () => {
+    const proc = manager.streamLogs(
       (data) => mainWindow?.webContents?.send('log-data', data),
       (data) => mainWindow?.webContents?.send('log-error', data)
     );
+    return { ok: true, streaming: proc !== null };
+  });
+
+  ipcMain.handle('open-log-folder', () => {
+    shell.openPath(manager.getHomeDir());
     return { ok: true };
   });
 
-  ipcMain.handle('stop-log-stream', async () => {
-    manager.stopStreamLogs();
-    return { ok: true };
-  });
-
-  // File operations
-  ipcMain.handle('open-log-folder', async () => {
-    const homeDir = manager.getHomeDir();
-    shell.openPath(homeDir);
-    return { ok: true };
-  });
-
-  ipcMain.handle('open-dashboard', async () => {
+  ipcMain.handle('open-dashboard', () => {
     shell.openExternal(`http://127.0.0.1:${manager.gatewayPort}`);
     return { ok: true };
   });
 
-  // External links
   ipcMain.handle('open-external', (_, url) => {
     shell.openExternal(url);
     return { ok: true };
   });
 
-  // App control
   ipcMain.handle('minimize-to-tray', () => {
     mainWindow.hide();
     return { ok: true };
@@ -118,7 +109,8 @@ function setupIPC() {
 async function pollHealth() {
   try {
     const probe = await manager.probePort();
-    const status = probe.reachable ? 'running' : 'stopped';
+    const processAlive = manager.isRunning();
+    const status = (processAlive || probe.reachable) ? 'running' : 'stopped';
     trayManager?.updateStatus(status);
     mainWindow?.webContents?.send('status-update', { status, probe });
   } catch {
@@ -135,16 +127,14 @@ function startHealthPolling() {
 app.whenReady().then(() => {
   createWindow();
   setupIPC();
-
   trayManager = new TrayManager(mainWindow, manager);
   trayManager.create();
-
   startHealthPolling();
 });
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  manager.stopStreamLogs();
+  manager.cleanup();
   if (healthInterval) clearInterval(healthInterval);
 });
 

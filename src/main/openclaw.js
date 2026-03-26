@@ -6,7 +6,9 @@ class OpenClawManager {
   constructor() {
     this.cliBin = 'openclaw';
     this.gatewayPort = 18789;
-    this.logProcess = null;
+    this.gatewayProcess = null;  // 仅前台模式使用
+    this.gatewayLogs = [];
+    this.maxLogLines = 5000;
   }
 
   // Execute a CLI command and return parsed result
@@ -23,16 +25,6 @@ class OpenClawManager {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
       });
     });
-  }
-
-  // Execute a CLI command expecting JSON output
-  async execJson(command, timeout = 15000) {
-    const result = await this.execCommand(`${command} --json`, timeout);
-    try {
-      return JSON.parse(result.stdout);
-    } catch {
-      return { raw: result.stdout };
-    }
   }
 
   // Check if openclaw CLI is available
@@ -85,24 +77,6 @@ class OpenClawManager {
     return { cli, node, docker };
   }
 
-  // Get gateway status
-  async getStatus() {
-    try {
-      return await this.execJson('gateway status', 10000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr || 'Failed to get status' };
-    }
-  }
-
-  // Get gateway health
-  async getHealth() {
-    try {
-      return await this.execJson('gateway health', 10000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr || 'Failed to get health' };
-    }
-  }
-
   // HTTP probe to check if gateway port is reachable
   probePort() {
     return new Promise((resolve) => {
@@ -117,45 +91,137 @@ class OpenClawManager {
     });
   }
 
-  // Combined health check
-  async healthCheck() {
-    const [status, health, probe] = await Promise.all([
-      this.getStatus(),
-      this.getHealth(),
-      this.probePort()
-    ]);
-    return { status, health, probe };
+  // Get gateway status via CLI
+  async getStatus() {
+    try {
+      const result = await this.execCommand('gateway status', 10000);
+      return { raw: result.stdout };
+    } catch (e) {
+      return { error: true, message: e.error || e.stderr || 'Failed to get status' };
+    }
   }
 
-  // Start gateway
-  async start() {
-    try {
-      return await this.execJson('gateway start', 30000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr || 'Failed to start' };
+  // Combined health check
+  async healthCheck() {
+    const [status, probe] = await Promise.all([
+      this.getStatus(),
+      this.probePort()
+    ]);
+    const processAlive = this.gatewayProcess !== null && this.gatewayProcess.exitCode === null;
+    return {
+      status,
+      running: processAlive || probe.reachable,
+      probe
+    };
+  }
+
+  // Start gateway - try `gateway start` first, fallback to `gateway run`
+  async start(onLog) {
+    // 先检查是否已在运行
+    const probe = await this.probePort();
+    if (probe.reachable) {
+      return { error: false, message: '网关已在运行中' };
     }
+
+    // 尝试后台模式 `openclaw gateway start`
+    try {
+      const result = await this.execCommand('gateway start', 30000);
+      if (onLog) onLog(result.stdout + '\n');
+      return { error: false, message: result.stdout || '网关已启动' };
+    } catch {
+      // fallback: 前台模式 `openclaw gateway run`
+      return this.startForeground(onLog);
+    }
+  }
+
+  // Start gateway in foreground mode via spawn
+  startForeground(onLog) {
+    if (this.gatewayProcess && this.gatewayProcess.exitCode === null) {
+      return { error: false, message: '网关已在运行中' };
+    }
+
+    const args = process.platform === 'win32'
+      ? ['/c', 'chcp', '65001', '>nul', '&&', this.cliBin, 'gateway', 'run', '--port', String(this.gatewayPort)]
+      : ['gateway', 'run', '--port', String(this.gatewayPort)];
+    const bin = process.platform === 'win32' ? 'cmd' : this.cliBin;
+
+    this.gatewayProcess = spawn(bin, args, { shell: false });
+    this.gatewayLogs = [];
+
+    const handleOutput = (data) => {
+      const text = data.toString();
+      const lines = text.split('\n').filter(l => l.trim());
+      this.gatewayLogs.push(...lines);
+      if (this.gatewayLogs.length > this.maxLogLines) {
+        this.gatewayLogs = this.gatewayLogs.slice(-this.maxLogLines);
+      }
+      if (onLog) onLog(text);
+    };
+
+    this.gatewayProcess.stdout.on('data', handleOutput);
+    this.gatewayProcess.stderr.on('data', handleOutput);
+
+    this.gatewayProcess.on('close', (code) => {
+      const msg = `[manager] 网关进程已退出，退出码: ${code}`;
+      this.gatewayLogs.push(msg);
+      this.gatewayProcess = null;
+      if (onLog) onLog(msg + '\n');
+    });
+
+    return { error: false, message: '网关正在启动（前台模式）...' };
   }
 
   // Stop gateway
   async stop() {
+    // 先尝试 CLI stop
     try {
-      return await this.execJson('gateway stop', 15000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr || 'Failed to stop' };
+      const result = await this.execCommand('gateway stop', 15000);
+      return { error: false, message: result.stdout || '网关已停止' };
+    } catch {
+      // fallback: kill foreground process
+      if (this.gatewayProcess && this.gatewayProcess.exitCode === null) {
+        if (process.platform === 'win32') {
+          exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'utf8' });
+        } else {
+          this.gatewayProcess.kill('SIGTERM');
+        }
+        return { error: false, message: '正在停止网关...' };
+      }
+      return { error: false, message: '网关未运行' };
     }
   }
 
   // Restart gateway
-  async restart() {
+  async restart(onLog) {
+    // 先尝试 CLI restart
     try {
-      return await this.execJson('gateway restart', 30000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr || 'Failed to restart' };
+      const result = await this.execCommand('gateway restart', 30000);
+      if (onLog) onLog(result.stdout + '\n');
+      return { error: false, message: result.stdout || '网关已重启' };
+    } catch {
+      // fallback: stop then start
+      await this.stop();
+      return new Promise((resolve) => {
+        setTimeout(async () => {
+          resolve(await this.start(onLog));
+        }, 2000);
+      });
     }
   }
 
-  // Get recent logs
+  // Check if gateway process is alive (foreground mode)
+  isRunning() {
+    return this.gatewayProcess !== null && this.gatewayProcess.exitCode === null;
+  }
+
+  // Get logs - from process buffer or CLI
   async getLogs(limit = 200) {
+    // 如果有前台进程日志，直接返回
+    if (this.gatewayLogs.length > 0) {
+      const lines = this.gatewayLogs.slice(-limit);
+      return { logs: lines.join('\n') };
+    }
+    // 否则尝试 CLI 获取
     try {
       const result = await this.execCommand(`logs --limit ${limit} --local-time`, 10000);
       return { logs: result.stdout };
@@ -164,28 +230,20 @@ class OpenClawManager {
     }
   }
 
-  // Start streaming logs (returns the child process)
+  // Stream logs via CLI
   streamLogs(onData, onError) {
-    if (this.logProcess) {
-      this.logProcess.kill();
-    }
+    // 如果有前台进程，日志已经自动推送，无需额外 stream
+    if (this.gatewayProcess) return null;
+
     const args = process.platform === 'win32'
       ? ['/c', 'chcp', '65001', '>nul', '&&', this.cliBin, 'logs', '--follow', '--local-time']
       : ['logs', '--follow', '--local-time'];
     const bin = process.platform === 'win32' ? 'cmd' : this.cliBin;
-    this.logProcess = spawn(bin, args, { shell: false });
-    this.logProcess.stdout.on('data', (data) => onData(data.toString()));
-    this.logProcess.stderr.on('data', (data) => onError(data.toString()));
-    this.logProcess.on('close', () => { this.logProcess = null; });
-    return this.logProcess;
-  }
 
-  // Stop streaming logs
-  stopStreamLogs() {
-    if (this.logProcess) {
-      this.logProcess.kill();
-      this.logProcess = null;
-    }
+    const logProc = spawn(bin, args, { shell: false });
+    logProc.stdout.on('data', (data) => onData(data.toString()));
+    logProc.stderr.on('data', (data) => onError(data.toString()));
+    return logProc;
   }
 
   // Get openclaw home directory
@@ -193,12 +251,14 @@ class OpenClawManager {
     return process.env.OPENCLAW_HOME || path.join(process.env.USERPROFILE || process.env.HOME || '', '.openclaw');
   }
 
-  // Open dashboard in browser
-  async openDashboard() {
-    try {
-      return await this.execCommand('dashboard', 5000);
-    } catch (e) {
-      return { error: true, message: e.error || e.stderr };
+  // Cleanup on app quit
+  cleanup() {
+    if (this.gatewayProcess && this.gatewayProcess.exitCode === null) {
+      if (process.platform === 'win32') {
+        exec(`taskkill /pid ${this.gatewayProcess.pid} /T /F`, { encoding: 'utf8' });
+      } else {
+        this.gatewayProcess.kill('SIGTERM');
+      }
     }
   }
 }

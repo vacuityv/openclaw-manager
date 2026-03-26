@@ -15,10 +15,7 @@ contextBridge.exposeInMainWorld('openclaw', {
 
   // Logs
   getLogs: (limit) => ipcRenderer.invoke('get-logs', limit),
-  startLogStream: () => ipcRenderer.invoke('start-log-stream'),
-  stopLogStream: () => ipcRenderer.invoke('stop-log-stream'),
   onLogData: (callback) => ipcRenderer.on('log-data', (_, data) => callback(data)),
-  onLogError: (callback) => ipcRenderer.on('log-error', (_, data) => callback(data)),
 
   // File operations
   openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
